@@ -1,15 +1,13 @@
 import productModel from "../models/product.js";
 import mongoose from "mongoose";
 import categoryModel from "../models/category.js";
-import fs from "fs";
-import path from "path";
+import axios from "axios";
 import slugify from "slugify";
-import { v4 as uuidv4 } from "uuid";
 import { getDirname } from "../helpers/dirName.js";
-import mime from "mime-types";
 import dotenv from "dotenv";
 import Order from "../models/order.js";
 import braintree from "braintree";
+import cloudinary from '../config/cloudinary.js';
 const { ObjectId } = mongoose.Types;
 
 dotenv.config();
@@ -46,13 +44,12 @@ export const createProductController = async (req, res) => {
     const product = new productModel({ ...req.fields, slug: slugify(name) });
 
     if (photo) {
-      const imagePath = path.join(
-        __dirname,
-        ".././uploads/products",
-        `${uuidv4()}_${photo.name}`
-      );
-      fs.writeFileSync(imagePath, fs.readFileSync(photo.path));
-      product.photo = imagePath;
+      const result = await cloudinary.uploader.upload(photo.path, {
+        folder: "products",
+        use_filename: true,
+        unique_filename: true,
+      });
+      product.photo = result.secure_url;
     }
 
     await product.save();
@@ -62,7 +59,6 @@ export const createProductController = async (req, res) => {
       product,
     });
   } catch (error) {
-    console.log(error);
     res.status(500).send({
       success: false,
       error,
@@ -126,26 +122,18 @@ export const getSingleProductController = async (req, res) => {
 };
 
 // get photo
+
 export const productPhotoController = async (req, res) => {
   try {
     const product = await productModel.findById(req.params.pid).select("photo");
 
     if (product && product.photo) {
-      const photo = path.resolve(product.photo); // resolve to absolute path
-      const contentType = mime.lookup(photo); // automatically detect the MIME type
+      const response = await axios.get(product.photo, { responseType: 'arraybuffer' });
 
-      // Check if the file exists
-      fs.stat(photo, (err, stats) => {
-        if (err || !stats.isFile()) {
-          return res.status(404).send({
-            success: false,
-            message: "Photo not found",
-          });
-        }
+      const contentType = response.headers['content-type'];
 
-        res.set("Content-type", contentType);
-        return res.status(200).sendFile(photo);
-      });
+      res.set('Content-Type', contentType);
+      res.status(200).send(response.data);
     } else {
       return res.status(404).send({
         success: false,
@@ -153,7 +141,6 @@ export const productPhotoController = async (req, res) => {
       });
     }
   } catch (error) {
-    console.log(error);
     res.status(500).send({
       success: false,
       message: "Error while getting photo",
@@ -162,7 +149,9 @@ export const productPhotoController = async (req, res) => {
   }
 };
 
+
 //delete controller
+
 export const deleteProductController = async (req, res) => {
   try {
     // Find the product by ID
@@ -174,19 +163,28 @@ export const deleteProductController = async (req, res) => {
       });
     }
 
-    // Get the image path from the product
-    const imagePath = product.photo;
+    // Get the image URL from the product
+    const imageUrl = product.photo;
 
     // Delete the product from the database
     await productModel.findByIdAndDelete(req.params.pid);
 
-    // Delete the image file from the server
-    if (imagePath) {
-      fs.unlink(imagePath, (err) => {
-        if (err) {
-          console.error("Error deleting the image file:", err);
-        }
-      });
+    // Delete the image from Cloudinary
+    if (imageUrl) {
+      // Extract public ID from the Cloudinary URL
+      const publicIdMatch = imageUrl.match(/\/v\d+\/(.+)\.[a-z]+$/);
+      if (publicIdMatch) {
+        const publicId = publicIdMatch[1];
+        await cloudinary.uploader.destroy(publicId, { resource_type: 'image' }, (error, result) => {
+          if (error) {
+            console.error("Error deleting the image from Cloudinary:", error);
+          } else {
+            console.log("Cloudinary delete result:", result);
+          }
+        });
+      } else {
+        console.error("Failed to extract public ID from the image URL");
+      }
     }
 
     res.status(200).send({
@@ -202,6 +200,7 @@ export const deleteProductController = async (req, res) => {
     });
   }
 };
+
 
 //upate product
 export const updateProductController = async (req, res) => {
@@ -238,7 +237,7 @@ export const updateProductController = async (req, res) => {
     if (!currentProduct) {
       return res.status(404).send({ error: "Product not found" });
     }
-    const oldPhotoPath = currentProduct.photo;
+    const oldPhotoUrl = currentProduct.photo;
 
     const product = await productModel.findByIdAndUpdate(
       req.params.pid,
@@ -247,17 +246,28 @@ export const updateProductController = async (req, res) => {
     );
 
     if (photo) {
-      const imagePath = path.join(
-        __dirname,
-        "../uploads/products",
-        `${uuidv4()}_${photo.name}`
-      );
-      fs.writeFileSync(imagePath, fs.readFileSync(photo.path));
-      product.photo = imagePath;
+      // Upload new photo to Cloudinary
+      const result = await cloudinary.uploader.upload(photo.path, {
+        folder: "products",
+        use_filename: true,
+        unique_filename: false,
+      });
+      product.photo = result.secure_url;
 
-      // Delete the old photo if it exists and is not the same as the new photo
-      if (oldPhotoPath && fs.existsSync(oldPhotoPath)) {
-        fs.unlinkSync(oldPhotoPath);
+      // Delete the old photo from Cloudinary if it exists
+      if (oldPhotoUrl) {
+        // Extract public ID from the Cloudinary URL
+        const publicIdMatch = oldPhotoUrl.match(/\/v\d+\/(.+)\.[a-z]+$/);
+        if (publicIdMatch) {
+          const publicId = publicIdMatch[1];
+          await cloudinary.uploader.destroy(publicId, { resource_type: 'image' }, (error, result) => {
+            if (error) {
+              console.error("Error deleting the image from Cloudinary:", error);
+            } else {
+              console.log("Cloudinary delete result:", result);
+            }
+          });
+        }
       }
     }
 
