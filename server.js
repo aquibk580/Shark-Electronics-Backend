@@ -31,8 +31,8 @@ app.use("/api/v1/product", productRoutes);
 app.use("/api/v1/cart", cartRoutes);
 app.use("/api/v1/order", orderRoute);
 
-app.use("*", function (req, res) {
-  res.sendFile(path.join(__dirname, "./frontend/build/index.html"));
+app.use("/", function (req, res) {
+  res.send("<h1>Welcome to Shark Electronics</h1>")
 });
 
 app.listen(PORT, () => {
