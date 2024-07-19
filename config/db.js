@@ -7,13 +7,7 @@ const URI = process.env.MONGOURI;
 
 const connectToMongo = async () => {
   try {
-    const connection = await mongoose.connect(URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-      serverSelectionTimeoutMS: 5000, 
-      useCreateIndex: true,
-      useFindAndModify: false,
-    });
+    const connection = await mongoose.connect(URI);
     console.log(
       `Connected to MongoDB Successfully: ${connection.connection.host}`
         .bgMagenta.white
